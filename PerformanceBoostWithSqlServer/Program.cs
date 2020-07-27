@@ -20,26 +20,29 @@ stopwatch.Start();
 //await Seed(); //Has some issues with tracking ef core entities 
 
 Console.WriteLine($"Total ms it took=> {stopwatch.ElapsedMilliseconds}");
-
+using DatabaseContext database = new();
 stopwatch.Restart();
-var courses = await CoursesWithEnrollments();
 
+var courses = await CoursesWithEnrollments(database);
+Console.WriteLine($"Total Found : {courses.Count}");
 Console.WriteLine($"Total ms it took=> {stopwatch.ElapsedMilliseconds}");
 
 
-ConsoleTable.From<Course>(courses)
+ConsoleTable.From<CourseWithEnrollmentViewModel>(courses)
     .Configure(o => o.NumberAlignment = Alignment.Right).Configure(c => c.EnableCount = true)
     .Write(Format.Alternative);
 
-async Task<List<Course>> CoursesWithEnrollments()
+async Task<List<CourseWithEnrollmentViewModel>> CoursesWithEnrollments(DatabaseContext database)
 {
-    using DatabaseContext database = new();
-
     var q = from c in database.Courses
             join ce in database.CourseEnrollments
             on c.Id equals ce.CourseId
-            select c;
+            
+            select new CourseWithEnrollmentViewModel(c.Id, c.Title, c.Level, string.Join(",", c.Enrollments.Select(x => $"{x.Student.FirstName} {x.Student.LastName}").ToArray()));
+    
     return await q.AsNoTracking().ToListAsync();
+    //return await q.AsNoTracking().AsSplitQuery().ToListAsync(); 
+    //Above fail with this : There is already an open DataReader associated with this Connection which must be closed - probably caused because EF does not allow concurrent exectuions
 }
 
 
@@ -83,6 +86,8 @@ async Task Seed()
     await database.SaveChangesAsync();
 }
 
+record CourseWithEnrollmentViewModel(int id, string title, string level, string studentName);
+
 public class DatabaseContext : DbContext
 {
     public static readonly ILoggerFactory DbLoggerFactory
@@ -102,13 +107,19 @@ public class DatabaseContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Course>().IsMemoryOptimized();
+        
+        //modelBuilder.Entity<Course>().HasMany<CourseEnrollment>().WithOne(x => x.Course);
+
         modelBuilder.Entity<Person>().ToTable("Persons").HasDiscriminator<PersonRole>(nameof(Person.Role)).HasValue<Student>(PersonRole.Student).HasValue<Teacher>(PersonRole.Teacher);
+        
+        //modelBuilder.Entity<Person>().HasMany<CourseEnrollment>().WithOne(x => x.Student);
 
         modelBuilder.Entity<Person>().IsMemoryOptimized();
         modelBuilder.Entity<Student>().IsMemoryOptimized();
         modelBuilder.Entity<Teacher>().IsMemoryOptimized();
 
         modelBuilder.Entity<CourseEnrollment>().HasKey(x => new { x.CourseId, x.StudentId });
+        
         modelBuilder.Entity<CourseEnrollment>().IsMemoryOptimized();
 
     }
@@ -136,6 +147,9 @@ public class Course
     [MaxLength(15)]
     [Required]
     public string Level { get; private set; }
+
+    
+    public ICollection<CourseEnrollment> Enrollments { get; private set; }
 }
 
 public enum PersonRole
@@ -195,6 +209,8 @@ public class Student : Person
 
     [Required]
     public SubscriptionLevel SubscriptionLevel { get; private set; }
+
+    public ICollection<CourseEnrollment> Enrollments { get; private set; }
 
 }
 
