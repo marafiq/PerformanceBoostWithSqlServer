@@ -2,8 +2,6 @@
 using Bogus.Extensions;
 using ConsoleTables;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
@@ -11,88 +9,85 @@ using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Diagnostics;
 using System.Linq;
-using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 
-public class Program
+
+//Top Level C# 
+
+Stopwatch stopwatch = new();
+stopwatch.Start();
+
+//await Seed(); //Has some issues with tracking ef core entities 
+
+Console.WriteLine($"Total ms it took=> {stopwatch.ElapsedMilliseconds}");
+
+stopwatch.Restart();
+var courses = await CoursesWithEnrollments();
+
+Console.WriteLine($"Total ms it took=> {stopwatch.ElapsedMilliseconds}");
+
+
+ConsoleTable.From<Course>(courses)
+    .Configure(o => o.NumberAlignment = Alignment.Right).Configure(c => c.EnableCount = true)
+    .Write(Format.Alternative);
+
+async Task<List<Course>> CoursesWithEnrollments()
 {
-    public static async Task Main(string[] args)
+    using DatabaseContext database = new();
+
+    var q = from c in database.Courses
+            join ce in database.CourseEnrollments
+            on c.Id equals ce.CourseId
+            select c;
+    return await q.AsNoTracking().ToListAsync();
+}
+
+
+
+
+async Task Seed()
+{
+    using DatabaseContext database = new();
+
+    Faker<Course> courseFaker = new();
+    var courses = courseFaker
+        .RuleFor(x => x.Title, value => value.Company.CompanyName())
+        .RuleFor(x => x.Level, "Expert")
+        .GenerateBetween(10, 20);
+    var studentFaker = new Faker<Student>();
+
+    var students = studentFaker
+        .RuleFor(x => x.FirstName, v => v.Person.FirstName)
+        .RuleFor(x => x.FirstName, v => v.Person.LastName)
+        .RuleFor(x => x.SubscriptionLevel, v => v.PickRandom<SubscriptionLevel>())
+        .CustomInstantiator(i => new Student(0, i.Person.FirstName, i.Person.LastName, i.PickRandom<SubscriptionLevel>()))
+        .GenerateBetween(100, 200);
+    database.Courses.AddRange(courses);
+    database.Students.AddRange(students);
+    await database.SaveChangesAsync(); // To get the IDs
+
+    foreach (var c in courses)
     {
-
-        Stopwatch stopwatch = new();
-        stopwatch.Start();
-
-        await Seed();
-
-        Console.WriteLine($"Total ms it took=> {stopwatch.ElapsedMilliseconds}");
-
-        stopwatch.Restart();
-        var courses = await CoursesWithEnrollments();
-
-        Console.WriteLine($"Total ms it took=> {stopwatch.ElapsedMilliseconds}");
-
-
-        ConsoleTable.From<Course>(courses)
-            .Configure(o => o.NumberAlignment = Alignment.Right).Configure(c => c.EnableCount = true)
-            .Write(Format.Alternative);
-
-        static async Task<List<Course>> CoursesWithEnrollments()
+        var random = new Random();
+        for (int i = 0; i < random.Next(2, 5); i++)
         {
-            using DatabaseContext database = new();
-
-            var q = from c in database.Courses
-                    join ce in database.CourseEnrollments
-                    on c.Id equals ce.CourseId
-                    select c;
-            return await q.AsNoTracking().ToListAsync();
-        }
-
-    }
-
-    private static async Task Seed()
-    {
-        using DatabaseContext database = new();
-
-        Faker<Course> courseFaker = new();
-        var courses = courseFaker
-            .RuleFor(x => x.Title, value => value.Company.CompanyName())
-            .RuleFor(x => x.Level, "Expert")
-            .GenerateBetween(10, 20);
-        var studentFaker = new Faker<Student>();
-
-        var students = studentFaker
-            .RuleFor(x => x.FirstName, v => v.Person.FirstName)
-            .RuleFor(x => x.FirstName, v => v.Person.LastName)
-            .RuleFor(x => x.SubscriptionLevel, v => v.PickRandom<SubscriptionLevel>())
-            .CustomInstantiator(i => new Student(0, i.Person.FirstName, i.Person.LastName, i.PickRandom<SubscriptionLevel>()))
-            .GenerateBetween(100, 200);
-        database.Courses.AddRange(courses);
-        database.Students.AddRange(students);
-        await database.SaveChangesAsync(); // To get the IDs
-
-        foreach (var c in courses)
-        {
-            var random = new Random();
-            for (int i = 0; i < random.Next(2,5); i++)
+            var n = random.Next(0, 100);
+            var student = students[n];
+            if (!database.CourseEnrollments.Any(x => x.CourseId == c.Id && x.StudentId == student.Id))
             {
-                var n = random.Next(0, 100);
-                var student = students[n];
-                if (!database.CourseEnrollments.Any(x => x.CourseId == c.Id && x.StudentId == student.Id))
-                {
-                    database.CourseEnrollments.Add(new CourseEnrollment(c.Id, student.Id, DateTime.UtcNow));
-                }
+                database.CourseEnrollments.Add(new CourseEnrollment(c.Id, student.Id, DateTime.UtcNow));
             }
         }
-
-        await database.SaveChangesAsync();
     }
 
+    await database.SaveChangesAsync();
 }
 
 public class DatabaseContext : DbContext
 {
     public static readonly ILoggerFactory DbLoggerFactory
     = LoggerFactory.Create(builder => { builder.AddConsole(); });
+
     public DbSet<Course> Courses { get; set; }
     public DbSet<Student> Students { get; set; }
     public DbSet<CourseEnrollment> CourseEnrollments { get; set; }
@@ -118,8 +113,9 @@ public class DatabaseContext : DbContext
 
     }
 
-
 }
+
+
 public class Course
 {
     public Course() { }
@@ -182,11 +178,13 @@ public enum SubscriptionLevel
     FullAccess = 3
 
 }
+
 public class Teacher : Person
 {
 
     public Teacher() { }
 }
+
 public class Student : Person
 {
     public Student() { }
